@@ -3,13 +3,14 @@ project(UsuLog)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(
-    usu_log STATIC
+    usu_log SHARED
     src/record.cpp
     src/ring_buffer.cpp
 )
 
-target_include_directories(usu_log PRIVATE include)
+target_include_directories(usu_log PRIVATE "${CMAKE_SOURCE_DIR}/include")
 
 add_subdirectory(test)
