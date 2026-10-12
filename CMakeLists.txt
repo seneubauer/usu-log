@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(
     usu_log STATIC
+    src/record.cpp
     src/ring_buffer.cpp
 )
 
