@@ -1,45 +1,80 @@
-#ifndef lib_ring_buffer_h
-#define lib_ring_buffer_h
+#ifndef lib_core_ring_buffer_h
+#define lib_core_ring_buffer_h
+
+// internal headers
+#include <util/types.hpp>
+#include <core/record.hpp>
 
 // standard headers
 #include <atomic>
 #include <cstddef>
 #include <new>
 #include <bit>
-#include <array>
-#include <expected>
+#include <concepts>
 #include <string_view>
+#include <utility>
+#include <type_traits>
+#include <array>
 
 namespace core {
     
-    template <typename T, std::size_t _capacity>
-    requires (std::has_single_bit(_capacity))
+    template <std::size_t Capacity>
+    requires (std::has_single_bit(Capacity))
     class ring_buffer {
-
     private:
-#if defined (__cpp_lib_hardware_interference_size) && __cpp_lib_hardware_interference_size >= 64
-        static constexpr std::size_t _cache_line_ = std::hardware_constructive_interference_size;
-#else
-        static constexpr std::size_t _cache_line_ = 64;
-#endif
-        static constexpr std::size_t _mask_ = _capacity - 1;
 
-        struct Node {
-            std::atomic<std::size_t> sequence;
-            alignas(alignof(T)) std::byte storage[sizeof(T)];
+        static constexpr std::size_t m_mask = Capacity - 1;
+        #if defined (__cpp_lib_hardware_interference_size) && __cpp_lib_hardware_interference_size >= 64
+        static constexpr std::size_t m_cache_line = std::hardware_constructive_interference_size;
+        #else
+        static constexpr std::size_t m_cache_line = 64;
+        #endif
+
+        struct buffer_node {
+            std::atomic<std::size_t> sequence{0};
+            core::record entry{};
         };
-        alignas(_cache_line_) std::atomic<std::size_t> m_head;
-        alignas(_cache_line_) std::atomic<std::size_t> m_tail;
-        alignas(_cache_line_) std::array<Node, _capacity> m_buffer;
+        alignas(m_cache_line) std::atomic<std::size_t> m_head;
+        alignas(m_cache_line) std::atomic<std::size_t> m_tail;
+        alignas(m_cache_line) std::array<buffer_node, Capacity> m_buffer;
+
     public:
 
-        ring_buffer() noexcept;
-        ~ring_buffer() noexcept;
+        static_assert(std::has_single_bit(Capacity));
+        static_assert(std::is_trivially_copyable_v<core::record>);
+        static_assert(std::atomic<std::size_t>::is_always_lock_free, "ring_buffer does not guarantee lock-free size_t atomics");
+
+        ring_buffer() noexcept {
+            for (std::size_t i = 0; i < Capacity; ++i) {
+                m_buffer[i].sequence.store(i, std::memory_order_relaxed);
+            }
+        }
+        ~ring_buffer() { /* remove all instances */ }
         ring_buffer(const ring_buffer&) = delete;
+        ring_buffer& operator=(const ring_buffer&) = delete;
+        ring_buffer(ring_buffer&&) = delete;
         ring_buffer& operator=(ring_buffer&&) = delete;
 
-        std::expected<T, std::string_view> pop() noexcept;
-        void push(T&& x) noexcept;
+        util::types::status_code pop(core::record& rec) {
+            
+        }
+
+        template <util::types::log_level Level, std::same_as<util::types::key_value_pair>... Args>
+        bool push(std::string_view host, std::string_view application, Args... args) {
+            std::size_t position = m_head.load(std::memory_order_relaxed);
+            while (true) {
+                if (head >= Capacity)
+                    return util::types::status_code::buffer_limit_reached;
+
+                if (m_head.compare_exchange_weak(head, head + 1, std::memory_order_acquire, std::memory_order_relaxed))
+                    break;
+            }
+            m_buffer[head].state.store(atomic_state::under_construction, std::memory_order_relaxed);
+            ::new (static_cast<void*>(m_buffer[head].storage)) core::record(host, application, std::forward<Args>(args)...);
+            m_buffer[head].state.store(atomic_state::ready, std::memory_order_release);
+            return util::types::status_code::success;
+        }
+
     };
 
 }
