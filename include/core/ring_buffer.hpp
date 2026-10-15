@@ -3,18 +3,24 @@
 
 // internal headers
 #include <util/types.hpp>
-#include <core/record.hpp>
+#include <util/helpers.hpp>
+#include <util/constants.hpp>
+
+// external headers
+#include <sys/types.h>
 
 // standard headers
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <new>
 #include <bit>
-#include <concepts>
 #include <string_view>
-#include <utility>
+#include <string>
 #include <type_traits>
 #include <array>
+#include <chrono>
+#include <cstring>
 
 namespace core {
     
@@ -30,18 +36,37 @@ namespace core {
         static constexpr std::size_t m_cache_line = 64;
         #endif
 
-        struct buffer_node {
+        struct alignas(m_cache_line) record {
+            std::chrono::system_clock::time_point timestamp;
+            pid_t process_id;
+            util::types::log_level level;
+            std::array<char, util::constants::generic_label_size> host;
+            const char* message_format;
+            std::array<std::uint8_t, 128> arg_buffer;
+            std::size_t buffer_used;
+        };
+
+        struct alignas(m_cache_line) buffer_node {
             std::atomic<std::size_t> sequence{0};
-            core::record entry{};
+            record entry{};
         };
         alignas(m_cache_line) std::atomic<std::size_t> m_head;
-        alignas(m_cache_line) std::atomic<std::size_t> m_tail;
-        alignas(m_cache_line) std::array<buffer_node, Capacity> m_buffer;
+        alignas(m_cache_line) std::size_t m_tail;
+        alignas(m_cache_line) std::array<record, Capacity> m_buffer;
+
+        template <typename T, typename... Args>
+        void serialize_args(std::uint8_t* destination, std::size_t offset, const T& first, const Args&... rest) {
+            if (offset + sizeof(T) <= 128) {
+                std::memcpy(destination + offset, &first, sizeof(T));
+                offset += sizeof(T);
+            }
+            serialize_args(destination, offset, rest...);
+        }
 
     public:
 
         static_assert(std::has_single_bit(Capacity));
-        static_assert(std::is_trivially_copyable_v<core::record>);
+        static_assert(std::is_trivially_copyable_v<record>);
         static_assert(std::atomic<std::size_t>::is_always_lock_free, "ring_buffer does not guarantee lock-free size_t atomics");
 
         ring_buffer() noexcept {
@@ -49,30 +74,52 @@ namespace core {
                 m_buffer[i].sequence.store(i, std::memory_order_relaxed);
             }
         }
-        ~ring_buffer() { /* remove all instances */ }
+        ~ring_buffer() = default; 
         ring_buffer(const ring_buffer&) = delete;
         ring_buffer& operator=(const ring_buffer&) = delete;
         ring_buffer(ring_buffer&&) = delete;
         ring_buffer& operator=(ring_buffer&&) = delete;
 
-        util::types::status_code pop(core::record& rec) {
-            
+        bool pop(std::chrono::system_clock::time_point& timestamp, pid_t& process_id, util::types::log_level& level, std::string& host) {
+            const std::size_t position = m_tail;
+            buffer_node& node = m_buffer[position + m_mask];
+            const std::size_t seq = node.sequennce.load(std::memory_order_acquire);
+            const auto diff = static_cast<std::int64_t>(seq - (position + 1));
+            if (diff != 0)
+                return false;
+
+            // define output params here
+
+            node.sequence.store(position + Capacity, std::memory_order_release);
+            m_tail = position + 1;
+            return true;
         }
 
-        template <util::types::log_level Level, std::same_as<util::types::key_value_pair>... Args>
-        bool push(std::string_view host, std::string_view application, Args... args) {
-            std::size_t position = m_head.load(std::memory_order_relaxed);
-            while (true) {
-                if (head >= Capacity)
-                    return util::types::status_code::buffer_limit_reached;
+        template <util::types::log_level Level, typename... Args>
+        bool push(pid_t process_id, std::string_view host, const char* str_template, Args... args) {
+            std::size_t position(m_head.load(std::memory_order_relaxed));
 
-                if (m_head.compare_exchange_weak(head, head + 1, std::memory_order_acquire, std::memory_order_relaxed))
-                    break;
+            while (true) {
+                buffer_node& node = m_buffer[position & m_mask];
+                const std::size_t seq(node.sequence.load(std::memory_order_acquire));
+                const auto diff = static_cast<std::int64_t>(seq - position);
+                if (diff == 0) {
+                    if (m_head.compare_exchange_weak(position, position + 1, std::memory_order_relaxed, std::memory_order_relaxed)) {
+                        node.entry.timestamp = std::chrono::system_clock::now();
+                        node.entry.process_id = process_id;
+                        node.entry.level = Level;
+                        node.entry.host = util::helpers::sv2chars<util::constants::generic_label_size>(host);
+                        node.entry.message_format = str_template;
+                        serialize_args(node.entry.arg_buffer.data(), node.entry.buffer_used, args...);
+                        node.sequence.store(position + 1, std::memory_order_release);
+                        return true;
+                    }
+                } else if (diff < 0) {
+                    return false;
+                } else {
+                    position = m_head.load(std::memory_order_relaxed);
+                }
             }
-            m_buffer[head].state.store(atomic_state::under_construction, std::memory_order_relaxed);
-            ::new (static_cast<void*>(m_buffer[head].storage)) core::record(host, application, std::forward<Args>(args)...);
-            m_buffer[head].state.store(atomic_state::ready, std::memory_order_release);
-            return util::types::status_code::success;
         }
 
     };

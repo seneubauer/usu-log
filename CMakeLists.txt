@@ -7,7 +7,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(
     usu_log SHARED
-    src/record.cpp
     src/ring_buffer.cpp
 )
 
