@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <string_view>
 
-namespace util::helpers {
+namespace usu::util::helpers {
 
     template <std::size_t N>
     static constexpr std::array<char, N> sv2chars(std::string_view str) {

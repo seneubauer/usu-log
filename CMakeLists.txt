@@ -11,5 +11,5 @@ add_library(
 )
 
 target_include_directories(usu_log PRIVATE "${CMAKE_SOURCE_DIR}/include")
-
+target_compile_options(usu_log PRIVATE -Wall -Wextra -Wpedantic)
 add_subdirectory(test)

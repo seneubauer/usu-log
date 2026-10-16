@@ -3,7 +3,7 @@
 
 #include <cstddef>
 
-namespace util::constants {
+namespace usu::util::constants {
 
     static constexpr std::size_t key_size{64};
     static constexpr std::size_t value_size{256};

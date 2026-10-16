@@ -16,13 +16,12 @@
 #include <new>
 #include <bit>
 #include <string_view>
-#include <string>
 #include <type_traits>
 #include <array>
 #include <chrono>
 #include <cstring>
 
-namespace core {
+namespace usu::core {
     
     template <std::size_t Capacity>
     requires (std::has_single_bit(Capacity))
@@ -52,7 +51,7 @@ namespace core {
         };
         alignas(m_cache_line) std::atomic<std::size_t> m_head;
         alignas(m_cache_line) std::size_t m_tail;
-        alignas(m_cache_line) std::array<record, Capacity> m_buffer;
+        alignas(m_cache_line) std::array<buffer_node, Capacity> m_buffer;
 
         template <typename T, typename... Args>
         void serialize_args(std::uint8_t* destination, std::size_t offset, const T& first, const Args&... rest) {
@@ -80,15 +79,18 @@ namespace core {
         ring_buffer(ring_buffer&&) = delete;
         ring_buffer& operator=(ring_buffer&&) = delete;
 
-        bool pop(std::chrono::system_clock::time_point& timestamp, pid_t& process_id, util::types::log_level& level, std::string& host) {
+        bool pop(std::chrono::system_clock::time_point& timestamp, pid_t& process_id, util::types::log_level& level) {
             const std::size_t position = m_tail;
             buffer_node& node = m_buffer[position + m_mask];
-            const std::size_t seq = node.sequennce.load(std::memory_order_acquire);
+            const std::size_t seq = node.sequence.load(std::memory_order_acquire);
             const auto diff = static_cast<std::int64_t>(seq - (position + 1));
             if (diff != 0)
                 return false;
 
             // define output params here
+            timestamp = node.entry.timestamp;
+            process_id = node.entry.process_id;
+            level = node.entry.level;
 
             node.sequence.store(position + Capacity, std::memory_order_release);
             m_tail = position + 1;

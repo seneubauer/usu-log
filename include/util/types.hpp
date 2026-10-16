@@ -10,7 +10,7 @@
 #include <string_view>
 #include <array>
 
-namespace util::types {
+namespace usu::util::types {
 
     enum class status_code : std::uint8_t {
         success,
