@@ -40,9 +40,11 @@ namespace usu::core {
             pid_t process_id;
             util::types::log_level level;
             std::array<char, util::constants::generic_label_size> host;
-            const char* message_format;
-            std::array<std::uint8_t, 128> arg_buffer;
-            std::size_t buffer_used;
+            const char* str_format;
+            std::array<char, util::constants::str_buffer_size> str_buffer;
+            std::array<std::uint8_t, util::constants::arg_buffer_size> arg_buffer;
+            std::size_t str_buffer_used;
+            std::size_t arg_buffer_used;
         };
 
         struct alignas(m_cache_line) buffer_node {
@@ -53,9 +55,9 @@ namespace usu::core {
         alignas(m_cache_line) std::size_t m_tail;
         alignas(m_cache_line) std::array<buffer_node, Capacity> m_buffer;
 
-        template <typename T, typename... Args>
-        void serialize_args(std::uint8_t* destination, std::size_t offset, const T& first, const Args&... rest) {
-            if (offset + sizeof(T) <= 128) {
+        template <std::size_t bufsize, typename T, typename... Args>
+        void serialize(std::uint8_t* destination, std::size_t offset, const T& first, const Args&... rest) {
+            if (offset + sizeof(T) <= bufsize) {
                 std::memcpy(destination + offset, &first, sizeof(T));
                 offset += sizeof(T);
             }
